@@ -388,3 +388,225 @@ static void interpret(struct program const* program) {
 
   free(container);
 }
+
+static LLVMModuleRef optimize_llvm_module(LLVMModuleRef module) {
+  LLVMPassManagerRef manager = LLVMCreatePassManager();
+  LLVMPassManagerBuilderRef builder = LLVMPassManagerBuilderCreate();
+  LLVMPassManagerBuilderSetOptLevel(builder, 3);
+
+  LLVMPassManagerBuilderPopulateModulePassManager(builder, manager);
+  LLVMRunPassManager(manager, module);
+
+  LLVMPassManagerBuilderDispose(builder);
+  LLVMDisposePassManager(manager);
+
+  return module;
+}
+
+static LLVMModuleRef build_llvm_module(struct program const* program) {
+  size_t i = 0;
+  size_t k = 0;
+
+  if (program == NULL || program->opcodes == NULL) {
+    abort();
+  }
+
+  LLVMModuleRef module = LLVMModuleCreateWithName("brainfuck");
+  LLVMBuilderRef builder = LLVMCreateBuilder();
+
+  LLVMValueRef container = NULL;
+  LLVMValueRef index = NULL;
+
+  LLVMBasicBlockRef start = NULL;
+  LLVMBasicBlockRef end = NULL;
+
+  LLVMBasicBlockRef* stack = malloc(sizeof(LLVMBasicBlockRef) * program->number_of_opcodes);
+
+  if (stack == NULL) {
+    abort();
+  }
+
+  {
+    LLVMTypeRef parameters[] = {LLVMInt32Type(), LLVMInt32Type()};
+
+    LLVMTypeRef result = LLVMPointerType(LLVMInt8Type(), B_GENERIC_ADDRESS_SPACE);
+
+    LLVMTypeRef function = LLVMFunctionType(result, parameters, 2, B_FALSE);
+
+    LLVMAddFunction(module, "calloc", function);
+  }
+
+  {
+    LLVMTypeRef function = LLVMFunctionType(LLVMInt32Type(), NULL, 0, B_FALSE);
+
+    LLVMAddFunction(module, "getchar", function);
+  }
+
+  {
+    LLVMTypeRef parameters[] = {LLVMInt32Type()};
+    LLVMTypeRef function = LLVMFunctionType(LLVMInt32Type(), parameters, 1, B_FALSE);
+
+    LLVMAddFunction(module, "putchar", function);
+  }
+
+  {
+    LLVMTypeRef function = LLVMFunctionType(LLVMVoidType(), NULL, 0, B_FALSE);
+
+    LLVMValueRef main = LLVMAddFunction(module, "main", function);
+    LLVMBasicBlockRef entry = LLVMAppendBasicBlock(main, "entry");
+
+    LLVMPositionBuilderAtEnd(builder, entry);
+  }
+
+  {
+    LLVMValueRef function = LLVMGetNamedFunction(module, "calloc");
+    LLVMValueRef arguments[] = {LLVMConstInt(LLVMInt32Type(), B_CONTAINER_LENGTH, B_FALSE),
+        LLVMConstInt(LLVMInt32Type(), sizeof(char), B_FALSE)};
+
+    LLVMValueRef zero = LLVMConstInt(LLVMInt32Type(), 0, B_FALSE);
+
+    container = LLVMBuildCall(builder, function, arguments, 2, "container");
+
+    index = LLVMBuildAlloca(builder, LLVMInt32Type(), "index");
+    LLVMBuildStore(builder, zero, index);
+  }
+
+  for (; i < program->number_of_opcodes; ++i) {
+    switch (program->opcodes[i].instruction) {
+      case B_MOVE_POINTER_LEFT: {
+        LLVMValueRef value = LLVMBuildLoad(builder, index, "");
+        LLVMValueRef amount =
+            LLVMConstInt(LLVMInt32Type(), program->opcodes[i].auxiliary, B_GENERIC_ADDRESS_SPACE);
+
+        LLVMValueRef result = LLVMBuildSub(builder, value, amount, "");
+
+        LLVMBuildStore(builder, result, index);
+        break;
+      }
+
+      case B_MOVE_POINTER_RIGHT: {
+        LLVMValueRef value = LLVMBuildLoad(builder, index, "");
+        LLVMValueRef amount =
+            LLVMConstInt(LLVMInt32Type(), program->opcodes[i].auxiliary, B_GENERIC_ADDRESS_SPACE);
+
+        LLVMValueRef result = LLVMBuildAdd(builder, value, amount, "");
+
+        LLVMBuildStore(builder, result, index);
+        break;
+      }
+
+      case B_INCREMENT_CELL_VALUE: {
+        LLVMValueRef offset = LLVMBuildLoad(builder, index, "");
+
+        LLVMValueRef cell = LLVMBuildGEP(builder, container, &offset, 1, "");
+
+        LLVMValueRef value = LLVMBuildLoad(builder, cell, "");
+        LLVMValueRef increment = LLVMBuildAdd(builder, value,
+            LLVMConstInt(LLVMInt8Type(), program->opcodes[i].auxiliary, B_FALSE), "");
+
+        LLVMBuildStore(builder, increment, cell);
+        break;
+      }
+
+      case B_DECREMENT_CELL_VALUE: {
+        LLVMValueRef offset = LLVMBuildLoad(builder, index, "");
+
+        LLVMValueRef cell = LLVMBuildGEP(builder, container, &offset, 1, "");
+
+        LLVMValueRef value = LLVMBuildLoad(builder, cell, "");
+        LLVMValueRef decrement = LLVMBuildSub(builder, value,
+            LLVMConstInt(LLVMInt8Type(), program->opcodes[i].auxiliary, B_FALSE), "");
+
+        LLVMBuildStore(builder, decrement, cell);
+        break;
+      }
+
+      case B_OUTPUT_CELL_VALUE: {
+        LLVMValueRef offset = LLVMBuildLoad(builder, index, "");
+
+        LLVMValueRef cell = LLVMBuildGEP(builder, container, &offset, 1, "");
+
+        LLVMValueRef value = LLVMBuildLoad(builder, cell, "");
+        LLVMValueRef character = LLVMBuildSExt(builder, value, LLVMInt32Type(), "");
+
+        LLVMValueRef function = LLVMGetNamedFunction(module, "putchar");
+
+        LLVMBuildCall(builder, function, &character, 1, "");
+        break;
+      }
+
+      case B_INPUT_CELL_VALUE: {
+        LLVMValueRef function = LLVMGetNamedFunction(module, "getchar");
+
+        LLVMValueRef input = LLVMBuildCall(builder, function, NULL, 0, "");
+
+        LLVMValueRef character = LLVMBuildTrunc(builder, input, LLVMInt8Type(), "");
+
+        LLVMValueRef offset = LLVMBuildLoad(builder, index, "");
+
+        LLVMValueRef cell = LLVMBuildGEP(builder, container, &offset, 1, "");
+
+        LLVMBuildStore(builder, character, cell);
+        break;
+      }
+
+      case B_BRANCH_FORWARD: {
+        LLVMBasicBlockRef body = NULL;
+
+        LLVMValueRef offset = NULL;
+        LLVMValueRef cell = NULL;
+        LLVMValueRef value = NULL;
+        LLVMValueRef predicate = NULL;
+
+        LLVMValueRef zero = LLVMConstInt(LLVMInt8Type(), 0, B_FALSE);
+
+        LLVMValueRef main = LLVMGetNamedFunction(module, "main");
+
+        start = LLVMAppendBasicBlock(main, "start");
+        stack[k++] = start;
+
+        body = LLVMAppendBasicBlock(main, "body");
+
+        end = LLVMAppendBasicBlock(main, "end");
+        stack[k++] = end;
+
+        LLVMBuildBr(builder, start);
+        LLVMPositionBuilderAtEnd(builder, start);
+
+        offset = LLVMBuildLoad(builder, index, "");
+        cell = LLVMBuildGEP(builder, container, &offset, 1, "");
+
+        value = LLVMBuildLoad(builder, cell, "");
+        predicate = LLVMBuildICmp(builder, LLVMIntEQ, value, zero, "");
+
+        LLVMBuildCondBr(builder, predicate, end, body);
+
+        LLVMPositionBuilderAtEnd(builder, body);
+        break;
+      }
+
+      case B_BRANCH_BACKWARD: {
+        end = stack[--k];
+        start = stack[--k];
+
+        LLVMBuildBr(builder, start);
+        LLVMPositionBuilderAtEnd(builder, end);
+
+        break;
+      }
+
+      case B_TERMINATE:
+      default:
+        break;
+    }
+  }
+
+  LLVMBuildFree(builder, container);
+  LLVMBuildRetVoid(builder);
+
+  LLVMDisposeBuilder(builder);
+
+  free(stack);
+
+  return optimize_llvm_module(module);
+}
