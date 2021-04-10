@@ -281,3 +281,110 @@ static struct program* run_length_encode(char const* source_code) {
   program->number_of_opcodes = i;
   return program;
 }
+
+static struct program* link_branches(struct program* program) {
+  int i = 0;
+  int j = 0;
+
+  long* stack = NULL;
+
+  if (program == NULL || program->opcodes == NULL) {
+    abort();
+  }
+
+  stack = malloc(sizeof(long) * program->number_of_opcodes);
+
+  if (stack == NULL) {
+    abort();
+  }
+
+  for (i = 0; i != (int)program->number_of_opcodes; ++i) {
+    switch (program->opcodes[i].instruction) {
+      case B_BRANCH_FORWARD:
+        stack[j++] = i;
+        break;
+
+      case B_BRANCH_BACKWARD:
+        --j;
+
+        program->opcodes[i].auxiliary = stack[j];
+        program->opcodes[stack[j]].auxiliary = i;
+
+      default:
+        break;
+    }
+  }
+
+  return program;
+}
+
+static void interpret(struct program const* program) {
+  size_t i = 0;
+
+  char* container = NULL;
+  char* pointer = NULL;
+
+  if (program == NULL || program->opcodes == NULL) {
+    abort();
+  }
+
+  container = calloc(B_CONTAINER_LENGTH, sizeof(char));
+
+  if (container == NULL) {
+    abort();
+  }
+
+  pointer = container;
+
+  for (; i != program->number_of_opcodes; ++i) {
+    switch (program->opcodes[i].instruction) {
+      case B_MOVE_POINTER_LEFT:
+        pointer -= program->opcodes[i].auxiliary;
+        break;
+
+      case B_MOVE_POINTER_RIGHT:
+        pointer += program->opcodes[i].auxiliary;
+        break;
+
+      case B_INCREMENT_CELL_VALUE:
+        *pointer += program->opcodes[i].auxiliary;
+        break;
+
+      case B_DECREMENT_CELL_VALUE:
+        *pointer -= program->opcodes[i].auxiliary;
+        break;
+
+      case B_OUTPUT_CELL_VALUE:
+        putchar(*pointer);
+        break;
+
+      case B_INPUT_CELL_VALUE:
+        *pointer = getchar();
+        break;
+
+      case B_BRANCH_FORWARD:
+        if (*pointer == 0) {
+          i = program->opcodes[i].auxiliary;
+        }
+
+        break;
+
+      case B_BRANCH_BACKWARD:
+        if (*pointer != 0) {
+          i = program->opcodes[i].auxiliary;
+        }
+
+        break;
+
+      case B_TERMINATE:
+        if (i != program->number_of_opcodes - 1) {
+          printf("%s: premature termination @ %zd\n", B_INVOCATION, i);
+        }
+
+      default:
+        break;
+    }
+  }
+
+  free(container);
+}
