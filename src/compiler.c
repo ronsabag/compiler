@@ -610,3 +610,65 @@ static LLVMModuleRef build_llvm_module(struct program const* program) {
 
   return optimize_llvm_module(module);
 }
+
+static void execute(struct program const* program) {
+  LLVMExecutionEngineRef engine = NULL;
+  char* error = NULL;
+
+  LLVMModuleRef module = build_llvm_module(program);
+
+  fputs("executing:\n", stderr);
+  LLVMDumpModule(module);
+
+  fputc('\n', stderr);
+  fflush(stderr);
+
+  LLVMVerifyModule(module, LLVMAbortProcessAction, &error);
+
+  LLVMDisposeMessage(error);
+  error = NULL;
+
+  LLVMInitializeNativeTarget();
+
+  LLVMInitializeNativeAsmPrinter();
+  LLVMInitializeNativeAsmParser();
+
+  if (LLVMCreateExecutionEngineForModule(&engine, module, &error) != 0) {
+    abort();
+  }
+
+  if (error != NULL) {
+    fprintf(stderr, "error: %s\n", error);
+    LLVMDisposeMessage(error);
+
+    abort();
+  }
+
+  puts("output:");
+
+  LLVMValueRef main = LLVMGetNamedFunction(module, "main");
+  LLVMRunFunction(engine, main, 0, NULL);
+
+  LLVMDisposeModule(module);
+}
+
+static void disassamble(struct program const* program) {
+  size_t i = 0;
+
+  if (program == NULL || program->opcodes == NULL) {
+    abort();
+  }
+
+  printf(",- b -----------------------.\n");
+
+  for (; i != program->number_of_opcodes; ++i) {
+    if (program->opcodes[i].instruction == B_TERMINATE) {
+      break;
+    }
+
+    printf("| 0x%08zX | %05zd:%02d | %c |\n", i, program->opcodes[i].auxiliary,
+        program->opcodes[i].instruction, program->opcodes[i].instruction);
+  }
+
+  printf("\\-------~ ......... ~-------/\n");
+}
