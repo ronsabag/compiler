@@ -672,3 +672,147 @@ static void disassamble(struct program const* program) {
 
   printf("\\-------~ ......... ~-------/\n");
 }
+
+static void explain_opcode(struct opcode const* opcode) {
+  if (opcode == NULL) {
+    abort();
+  }
+
+  switch (opcode->instruction) {
+    case B_MOVE_POINTER_LEFT:
+      printf("| move-pointer-left       |   (%05zd)   |", opcode->auxiliary);
+      break;
+
+    case B_MOVE_POINTER_RIGHT:
+      printf("| move-pointer-right      |   (%05zd)   |", opcode->auxiliary);
+      break;
+
+    case B_INCREMENT_CELL_VALUE:
+      printf("| increment-cell-value    |   (%05zd)   |", opcode->auxiliary);
+      break;
+
+    case B_DECREMENT_CELL_VALUE:
+      printf("| decrement-cell-value    |   (%05zd)   |", opcode->auxiliary);
+      break;
+
+    case B_OUTPUT_CELL_VALUE:
+      printf("| output-cell-value       |      ~      |");
+      break;
+
+    case B_INPUT_CELL_VALUE:
+      printf("| input-cell-value        |      ~      |");
+      break;
+
+    case B_BRANCH_FORWARD:
+      printf("| branch-if-zero          | [x%08zX] |", opcode->auxiliary);
+      break;
+
+    case B_BRANCH_BACKWARD:
+      printf("| branch-back-if-not-zero | [x%08zX] |", opcode->auxiliary);
+      break;
+
+    case B_TERMINATE:
+      printf("| terminate-execution ------------------/");
+
+    default:
+      break;
+  }
+}
+
+static void explain(struct program const* program) {
+  size_t i = 0;
+
+  if (program == NULL || program->opcodes == NULL) {
+    abort();
+  }
+
+  printf(",- b -----------------------------------.\n");
+  printf("| (): relative | []: absolute | ~: n/a  |\n");
+  printf("|---------------------------------------|\n");
+
+  for (; i != program->number_of_opcodes; ++i) {
+    explain_opcode(program->opcodes + i);
+    putchar('\n');
+  }
+}
+
+static void emit_c_code(struct program const* program, char const* filename) {
+  size_t i = 0;
+
+  FILE* file = fopen(filename, "wt");
+
+  if (file == NULL) {
+    abort();
+  }
+
+  fprintf(file,
+      "/* %s */\n#include <stdio.h>\n\n"
+      "static char container[%zd];\n"
+      "static char *pointer = container;\n"
+      "\n"
+      "int main(int count, char **arguments)\n"
+      "{\n",
+      B_INPUT_FILENAME, B_CONTAINER_LENGTH);
+
+  for (; i != program->number_of_opcodes; ++i) {
+    switch (program->opcodes[i].instruction) {
+      case B_MOVE_POINTER_LEFT:
+        fputs("        ", file);
+        fprintf(file, "pointer -= %zd;\n", program->opcodes[i].auxiliary);
+        break;
+
+      case B_MOVE_POINTER_RIGHT:
+        fputs("        ", file);
+        fprintf(file, "pointer += %zd;\n", program->opcodes[i].auxiliary);
+        break;
+
+      case B_INCREMENT_CELL_VALUE:
+        fputs("        ", file);
+        fprintf(file, "*pointer += %zd;\n", program->opcodes[i].auxiliary);
+        break;
+
+      case B_DECREMENT_CELL_VALUE:
+        fputs("        ", file);
+        fprintf(file, "*pointer -= %zd;\n", program->opcodes[i].auxiliary);
+        break;
+
+      case B_OUTPUT_CELL_VALUE:
+        fputs("        ", file);
+        fputs("putchar(*pointer);\n", file);
+        break;
+
+      case B_INPUT_CELL_VALUE:
+        fputs("        ", file);
+        fputs("*pointer = getchar();\n", file);
+        break;
+
+      case B_BRANCH_FORWARD:
+        fprintf(file, "\nl%zd:\n", i);
+
+        fputs("        ", file);
+        fprintf(file,
+            "if (*pointer == 0) {\n"
+            "                goto l%zd;\n"
+            "        }\n\n",
+            program->opcodes[i].auxiliary);
+
+        break;
+
+      case B_BRANCH_BACKWARD:
+        fputs("\n        ", file);
+        fprintf(file,
+            "if (*pointer != 0) {\n"
+            "                goto l%zd;\n"
+            "        }\n\n",
+            program->opcodes[i].auxiliary);
+
+        fprintf(file, "l%zd:\n", i);
+
+      default:
+        break;
+    }
+  }
+
+  fputs("\n        return 0;\n}\n", file);
+  fclose(file);
+}
